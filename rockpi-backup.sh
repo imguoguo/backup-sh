@@ -99,6 +99,9 @@ check_part() {
     echo "Only supports ext4 fstype."
     exit -1
   fi
+
+  SECTOR_SIZE=$(blockdev --getss $device)
+  echo "Detected sector size: $SECTOR_SIZE bytes"
 }
 
 
@@ -180,7 +183,7 @@ gen_image_size() {
     fi
   fi
 
-  rootfs_size=$(df -B512 $MOUNT_POINT | awk 'NR == 2{print $3}')
+  rootfs_size=$(df -B${SECTOR_SIZE} $MOUNT_POINT | awk 'NR == 2{print $3}')
   backup_size=$(expr $rootfs_size +  $rootfs_start + 40 + 1000000 )
 }
 
@@ -188,7 +191,7 @@ gen_image_size() {
 check_avail_space() {
   output_=${output}
   while true; do
-    store_size=$(df -B512 | grep "$output_\$" | awk '{print $4}' | sed 's/M//g')
+    store_size=$(df -B${SECTOR_SIZE} | grep "$output_\$" | awk '{print $4}' | sed 's/M//g')
     if [ "$store_size" != "" ] || [ "$output_" == "\\" ]; then
       break
     fi
@@ -247,15 +250,15 @@ rebuild_root_partition() {
 
 backup_image() {
   echo "Generate the base images. This might take some time."
-  dd if=/dev/zero of=${output} bs=512 count=0 seek=$backup_size status=progress
+  dd if=/dev/zero of=${output} bs=${SECTOR_SIZE} count=0 seek=$backup_size status=progress
 
   echo "Copy other partition"
-  dd if=$device of=$output bs=512 seek=0 count=$(expr $rootfs_start - 1) status=progress conv=notrunc
+  dd if=$device of=$output bs=${SECTOR_SIZE} seek=0 count=$(expr $rootfs_start - 1) status=progress conv=notrunc
 
   rebuild_root_partition
 
   echo Mount loop device...
-  loopdevice=$(losetup -f --show $output)
+  loopdevice=$(losetup -b ${SECTOR_SIZE} -f --show $output)
   mapdevice="/dev/mapper/$(kpartx -va $loopdevice | sed -E 's/.*(loop[0-9]+)p.*/\1/g' | head -1)"
   sleep 2  # waiting for kpartx
 
@@ -333,7 +336,7 @@ main() {
   check_avail_space
 
   printf "The backup file will be saved at %s\n" "$output"
-  printf "After this operation, %s MB of additional disk space will be used.\n" "$(expr $backup_size / 2048)"
+  printf "After this operation, %s MB of additional disk space will be used.\n" "$(expr $backup_size \* $SECTOR_SIZE / 1048576)"
   confirm "Do you want to continue?" "abort"
   create_service
   backup_image
